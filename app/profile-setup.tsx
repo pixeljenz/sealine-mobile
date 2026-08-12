@@ -1,4 +1,8 @@
 // app/profile-setup.tsx
+// ONB-1.5 — Profile setup
+// Per PRD Scenarios 2.1–2.4: Name required (non-empty), photo optional (default avatar if skipped),
+// about/status pre-filled and editable but never clearable.
+
 import React, { useState } from 'react';
 import {
   View,
@@ -10,15 +14,20 @@ import {
   Image,
   Alert,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { mockOnboardingApi } from '@/api/mockOnboardingApi';
 
+const DEFAULT_ABOUT = "Hey there! I'm using Sealine.";
 const DEFAULT_AVATAR = 'https://ui-avatars.com/api/?name=User&background=0F9C90&color=fff&size=100&bold=true';
 
 export default function ProfileSetupScreen() {
   const params = useLocalSearchParams<{ phoneNumber: string }>();
+  const phoneNumber = params.phoneNumber || '';
+  
   const [name, setName] = useState('');
-  const [about, setAbout] = useState("Hey there! I'm using Sealine.");
+  const [about, setAbout] = useState(DEFAULT_ABOUT);
   const [photo, setPhoto] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState({ name: '', about: '' });
@@ -27,8 +36,17 @@ export default function ProfileSetupScreen() {
 
   const validate = () => {
     const newErrors = { name: '', about: '' };
-    if (!name.trim()) newErrors.name = 'Name is required';
-    if (!about.trim()) newErrors.about = 'About is required';
+    
+    // Name: required, non-empty, not just spaces
+    if (!name.trim()) {
+      newErrors.name = 'Name is required';
+    }
+    
+    // About: required, cannot be empty
+    if (!about.trim()) {
+      newErrors.about = 'About is required';
+    }
+    
     setErrors(newErrors);
     return !newErrors.name && !newErrors.about;
   };
@@ -39,19 +57,37 @@ export default function ProfileSetupScreen() {
     setIsLoading(true);
     
     try {
-      // TODO: Call API to create profile
-      // await mockOnboardingApi.createProfile({ phoneNumber, name, about, photo });
-      
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Call mock API to create profile
+      await mockOnboardingApi.createProfile({
+        phoneNumber,
+        name: name.trim(),
+        about: about.trim(),
+        photo: photo,
+      });
       
       // Navigate to device handoff (ONB-1.7)
       router.push('/device-handoff');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create profile. Please try again.');
+    } catch (error: any) {
+      if (error.message === 'NAME_REQUIRED') {
+        setErrors(prev => ({ ...prev, name: 'Name is required' }));
+      } else if (error.message === 'ABOUT_REQUIRED') {
+        setErrors(prev => ({ ...prev, about: 'About is required' }));
+      } else {
+        Alert.alert('Error', 'Failed to create profile. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleAboutChange = (text: string) => {
+    // If user tries to clear it completely, revert to default
+    if (text.trim().length === 0 && about.trim().length === 0) {
+      setAbout(DEFAULT_ABOUT);
+      return;
+    }
+    setAbout(text);
+    if (errors.about) setErrors({ ...errors, about: '' });
   };
 
   const handleAddPhoto = () => {
@@ -83,7 +119,7 @@ export default function ProfileSetupScreen() {
         </TouchableOpacity>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>Name</Text>
+          <Text style={styles.label}>Name <Text style={styles.required}>*</Text></Text>
           <TextInput
             style={[styles.input, errors.name && styles.inputError]}
             placeholder="Your name"
@@ -100,15 +136,12 @@ export default function ProfileSetupScreen() {
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>About</Text>
+          <Text style={styles.label}>About <Text style={styles.required}>*</Text></Text>
           <TextInput
             style={[styles.input, styles.aboutInput, errors.about && styles.inputError]}
-            placeholder="Hey there, I'm using Sealine"
+            placeholder="What's on your mind?"
             value={about}
-            onChangeText={(text) => {
-              setAbout(text);
-              if (errors.about) setErrors({ ...errors, about: '' });
-            }}
+            onChangeText={handleAboutChange}
             maxLength={140}
             multiline
             editable={!isLoading}
@@ -126,9 +159,11 @@ export default function ProfileSetupScreen() {
           onPress={handleContinue}
           disabled={!isValid || isLoading}
         >
-          <Text style={styles.continueButtonText}>
-            {isLoading ? 'Saving...' : 'Start messaging'}
-          </Text>
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.continueButtonText}>Start messaging</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -153,9 +188,8 @@ const styles = StyleSheet.create({
     color: '#3FC6B8',
   },
   title: {
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontSize: 26,
     fontWeight: '700',
+    fontSize: 26,
     color: '#F3F3F4',
     marginTop: 8,
   },
@@ -199,6 +233,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9AA0AC',
     marginBottom: 8,
+  },
+  required: {
+    color: '#E5484D',
   },
   input: {
     borderWidth: 1,

@@ -1,15 +1,39 @@
 // app/device-handoff.tsx
-import React from 'react';
+// ONB-1.7 — New-device login handoff
+// Per PRD Scenarios 5.1–5.4: Successful verification on new device force-logs-out
+// old phone + Web silently. Confirmation shown only on new device.
+
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { mockOnboardingApi } from '@/api/mockOnboardingApi';
 
 export default function DeviceHandoffScreen() {
+  const params = useLocalSearchParams<{ phoneNumber: string }>();
+  const phoneNumber = params.phoneNumber || '';
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Perform the device handoff when screen loads
+    const performHandoff = async () => {
+      try {
+        await mockOnboardingApi.loginNewDevice(phoneNumber);
+        setIsLoading(false);
+      } catch (error) {
+        // Even if handoff fails, allow user to continue
+        setIsLoading(false);
+      }
+    };
+    performHandoff();
+  }, [phoneNumber]);
+
   const handleContinue = () => {
     router.replace('/(tabs)');
   };
@@ -28,9 +52,17 @@ export default function DeviceHandoffScreen() {
           This is your new device. Your other devices have been logged out.
         </Text>
 
-        <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
-          <Text style={styles.continueButtonText}>Continue</Text>
-        </TouchableOpacity>
+        {isLoading ? (
+          <ActivityIndicator color="#3FC6B8" size="large" style={styles.loader} />
+        ) : (
+          <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
+            <Text style={styles.continueButtonText}>Continue</Text>
+          </TouchableOpacity>
+        )}
+
+        <Text style={styles.note}>
+          Old devices were logged out silently — no warning was shown there.
+        </Text>
       </View>
     </SafeAreaView>
   );
@@ -67,9 +99,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#3FC6B8',
   },
   title: {
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontSize: 28,
     fontWeight: '700',
+    fontSize: 28,
     color: '#F3F3F4',
     marginBottom: 12,
   },
@@ -79,6 +110,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     marginBottom: 32,
+  },
+  loader: {
+    marginVertical: 8,
   },
   continueButton: {
     backgroundColor: '#0F9C90',
@@ -92,5 +126,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  note: {
+    fontSize: 11,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 16,
+    lineHeight: 16,
   },
 });

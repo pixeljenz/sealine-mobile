@@ -1,5 +1,9 @@
 // app/legal-acceptance.tsx
-import React, { useState } from 'react';
+// ONB-1.3 — Legal acceptance gate before OTP
+// Per PRD Scenario 1.12, PRD §5.1: Acceptance screen shown before OTP entry;
+// single explicit action; bundles 16+ age confirmation. Cannot reach OTP without it.
+
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,18 +12,58 @@ import {
   SafeAreaView,
   ScrollView,
   Linking,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { mockOnboardingApi } from '@/api/mockOnboardingApi';
 
 export default function LegalAcceptanceScreen() {
   const params = useLocalSearchParams<{ phoneNumber: string }>();
+  const phoneNumber = params.phoneNumber || '';
   const [accepted, setAccepted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleAccept = () => {
-    router.push({
-      pathname: '/otp-entry',
-      params: { phoneNumber: params.phoneNumber }
-    });
+  // Check if legal was already accepted (in case user goes back)
+  useEffect(() => {
+    const checkLegal = async () => {
+      try {
+        const hasAccepted = await mockOnboardingApi.hasAcceptedLegal(phoneNumber);
+        if (hasAccepted) {
+          setAccepted(true);
+        }
+      } catch (error) {
+        // Ignore - session might not exist
+      }
+    };
+    checkLegal();
+  }, [phoneNumber]);
+
+  const handleAccept = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Record legal acceptance in mock API (ONB-1.3 backend enforcement)
+      await mockOnboardingApi.acceptLegal(phoneNumber);
+      
+      // Navigate to OTP entry
+      router.push({
+        pathname: '/otp-entry',
+        params: { phoneNumber }
+      });
+    } catch (error: any) {
+      if (error.message === 'NO_ACTIVE_SESSION') {
+        Alert.alert(
+          'Session Expired',
+          'Please go back and enter your phone number again.'
+        );
+        router.back();
+      } else {
+        Alert.alert('Error', 'Failed to save acceptance. Please try again.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const openTerms = () => {
@@ -61,29 +105,43 @@ export default function LegalAcceptanceScreen() {
           <View style={styles.spacer} />
         </ScrollView>
 
+        {/* Single explicit acceptance action - bundles 16+ age confirmation */}
         <TouchableOpacity
-          style={styles.checkboxContainer}
-          onPress={() => setAccepted(!accepted)}
+          style={[
+            styles.acceptButton,
+            accepted && styles.acceptButtonActive,
+            isLoading && styles.acceptButtonDisabled,
+          ]}
+          onPress={handleAccept}
+          disabled={accepted || isLoading}
           activeOpacity={0.7}
         >
-          <View style={[styles.checkbox, accepted && styles.checkboxChecked]}>
-            {accepted && <Text style={styles.checkmark}>✓</Text>}
+          <View style={styles.checkboxContainer}>
+            <View style={[styles.checkbox, accepted && styles.checkboxChecked]}>
+              {accepted && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <Text style={styles.checkboxLabel}>
+              I accept the Terms of Service and Privacy Policy
+            </Text>
           </View>
-          <Text style={styles.checkboxLabel}>
-            I accept the Terms of Service and Privacy Policy
-          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[
             styles.continueButton,
-            !accepted && styles.continueButtonDisabled,
+            (!accepted || isLoading) && styles.continueButtonDisabled,
           ]}
           onPress={handleAccept}
-          disabled={!accepted}
+          disabled={!accepted || isLoading}
         >
-          <Text style={styles.continueButtonText}>Continue</Text>
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.continueButtonText}>Continue</Text>
+          )}
         </TouchableOpacity>
+
+        <Text style={styles.ageNote}>You confirm you are 16 years or older</Text>
       </View>
     </SafeAreaView>
   );
@@ -107,9 +165,8 @@ const styles = StyleSheet.create({
     color: '#3FC6B8',
   },
   title: {
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontSize: 24,
     fontWeight: '700',
+    fontSize: 24,
     color: '#F3F3F4',
     marginTop: 8,
     marginBottom: 16,
@@ -140,11 +197,23 @@ const styles = StyleSheet.create({
   spacer: {
     height: 24,
   },
+  acceptButton: {
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#2E323C',
+    marginTop: 8,
+  },
+  acceptButtonActive: {
+    borderColor: '#0F9C90',
+    backgroundColor: 'rgba(15, 156, 144, 0.05)',
+  },
+  acceptButtonDisabled: {
+    opacity: 0.5,
+  },
   checkboxContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 12,
-    marginTop: 8,
+    alignItems: 'center',
   },
   checkbox: {
     width: 24,
@@ -155,7 +224,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    marginTop: 2,
   },
   checkboxChecked: {
     backgroundColor: '#0F9C90',
@@ -170,7 +238,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#F3F3F4',
     flex: 1,
-    lineHeight: 24,
+    lineHeight: 22,
   },
   continueButton: {
     backgroundColor: '#0F9C90',
@@ -179,7 +247,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 16,
-    marginBottom: 24,
   },
   continueButtonDisabled: {
     opacity: 0.35,
@@ -188,5 +255,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  ageNote: {
+    textAlign: 'center',
+    color: '#6B7280',
+    fontSize: 11,
+    marginTop: 12,
+    marginBottom: 24,
   },
 });

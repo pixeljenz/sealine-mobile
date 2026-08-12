@@ -1,4 +1,7 @@
 // app/splash.tsx
+// ONB-1.1 — Splash screen
+// Per PRD Scenario 1.1: Tap to proceed only — no skip, no guest mode, no access to any other screen.
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
@@ -13,7 +16,6 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -24,7 +26,6 @@ const COLORS = {
   ink: '#c27b10',
   inkDim: 'rgba(243,241,236,0.5)',
   inkFaint: '#c27b10',
-  accent: '#c9b48b',
   ring: 'rgba(255, 174, 13, 0.445)',
   ringSoft: 'rgba(201,180,139,0.12)',
 };
@@ -45,7 +46,7 @@ const Chevron = ({ style }: { style?: any }) => (
         stroke={COLORS.inkDim}
         strokeWidth={1.3}
         strokeLinecap="round"
-        strokeLinejoin="round"
+        strokelinejoin="round"
       />
     </Svg>
   </Animated.View>
@@ -61,6 +62,7 @@ export default function SplashScreen() {
   const rise2 = useRef(new Animated.Value(0)).current;
   const nextOpacity = useRef(new Animated.Value(0)).current;
 
+  // Breathing animation
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -82,6 +84,7 @@ export default function SplashScreen() {
     return () => loop.stop();
   }, [breathe]);
 
+  // Chevron animations
   useEffect(() => {
     const makeRiseLoop = (val: Animated.Value, delay: number) =>
       Animated.loop(
@@ -130,6 +133,7 @@ export default function SplashScreen() {
         setRipples((prev) => prev.filter((r) => r.id !== id));
       });
 
+      // Show "You're in" overlay then navigate
       setTimeout(() => {
         setShowNext(true);
         Animated.timing(nextOpacity, {
@@ -166,11 +170,13 @@ export default function SplashScreen() {
         style={StyleSheet.absoluteFill}
       />
 
+      {/* Top bar */}
       <View style={styles.top}>
         <Text style={styles.topLabel}>SEALINE</Text>
         <Text style={[styles.topLabel, { color: COLORS.inkDim }]}>v1.0</Text>
       </View>
 
+      {/* Center content */}
       <View style={styles.center} pointerEvents="none">
         <Animated.View
           style={[
@@ -190,6 +196,7 @@ export default function SplashScreen() {
         </View>
       </View>
 
+      {/* Bottom CTA */}
       <View style={styles.bottom} pointerEvents="none">
         <View style={styles.chevrons}>
           <Chevron
@@ -209,6 +216,7 @@ export default function SplashScreen() {
         <View style={styles.ctaLine} />
       </View>
 
+      {/* Ripple effects */}
       {ripples.map((r) => {
         const scale = r.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
         const opacity = r.progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
@@ -232,6 +240,7 @@ export default function SplashScreen() {
         );
       })}
 
+      {/* "You're in" overlay */}
       {showNext && (
         <Animated.View
           pointerEvents={showNext ? 'auto' : 'none'}
