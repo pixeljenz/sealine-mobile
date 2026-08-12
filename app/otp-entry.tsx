@@ -1,4 +1,8 @@
 // app/otp-entry.tsx
+// ONB-1.4 — OTP entry: attempts, lockout, resend
+// Per PRD Scenarios 1.6–1.9: 3 attempts, inline error with remaining-count,
+// 30s lockout after 3 fails, 30s resend cooldown.
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -8,6 +12,7 @@ import {
   StyleSheet,
   SafeAreaView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { mockOnboardingApi } from '@/api/mockOnboardingApi';
@@ -23,6 +28,7 @@ export default function OtpEntryScreen() {
   const [resendCooldown, setResendCooldown] = useState(0);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
+  const [isResending, setIsResending] = useState(false);
   
   const inputRefs = useRef<Array<TextInput | null>>([]);
 
@@ -90,17 +96,17 @@ export default function OtpEntryScreen() {
       const result = await mockOnboardingApi.verifyOtp(phoneNumber, code);
 
       if (result.status === 'success') {
-        // Check if number is registered (ONB-1.6)
+        // ONB-1.6: Check if number is registered
         const isRegistered = await mockOnboardingApi.isNumberRegistered(phoneNumber);
         
         // Clear session
         mockOnboardingApi.clearSession();
         
         if (isRegistered) {
-          // Existing user → go to ChatList
+          // Existing user → go to ChatList (tabs)
           router.replace('/(tabs)');
         } else {
-          // New user → go to ProfileSetup
+          // New user → go to ProfileSetup (ONB-1.5)
           router.push({
             pathname: '/profile-setup',
             params: { phoneNumber }
@@ -112,38 +118,57 @@ export default function OtpEntryScreen() {
         setError(`Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`);
         setOtp(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
-        
-        // Shake animation
-        const row = document.getElementById('otp-row');
-        if (row) {
-          row.classList.add('shake');
-          setTimeout(() => row.classList.remove('shake'), 400);
-        }
       } else if (result.status === 'locked_out') {
         setIsLocked(true);
         setLockoutSeconds(result.secondsRemaining);
         setError(`Too many attempts. Try again in ${result.secondsRemaining}s.`);
         setOtp(['', '', '', '', '', '']);
+      } else if (result.status === 'expired') {
+        setError('Code expired. Please request a new one.');
+        setOtp(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
       }
-    } catch (error) {
-      setError('Failed to verify code. Please try again.');
+    } catch (error: any) {
+      if (error.message === 'LEGAL_NOT_ACCEPTED') {
+        Alert.alert(
+          'Legal Acceptance Required',
+          'You must accept the Terms of Service and Privacy Policy before verifying.',
+          [{ text: 'Go Back', onPress: () => router.back() }]
+        );
+      } else {
+        setError('Failed to verify code. Please try again.');
+      }
     } finally {
       setIsVerifying(false);
     }
   };
 
   const handleResend = async () => {
-    if (resendCooldown > 0) return;
+    if (resendCooldown > 0 || isResending) return;
+
+    setIsResending(true);
+    setError('');
 
     try {
       await mockOnboardingApi.sendOtp(phoneNumber);
       setResendCooldown(30);
       setOtp(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
-      setError('');
+      
+      // Reset attempts when resending
+      setAttempts(0);
+      setIsLocked(false);
+      setLockoutSeconds(0);
+      
       Alert.alert('Code Sent', 'A new verification code has been sent.');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to resend code. Please try again.');
+    } catch (error: any) {
+      if (error.message === 'RESEND_COOLDOWN_ACTIVE') {
+        Alert.alert('Please Wait', 'Please wait 30 seconds before requesting another code.');
+      } else {
+        Alert.alert('Error', 'Failed to resend code. Please try again.');
+      }
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -163,7 +188,7 @@ export default function OtpEntryScreen() {
           Sent to {phoneNumber}
         </Text>
 
-        <View style={styles.otpContainer} id="otp-row">
+        <View style={styles.otpContainer}>
           {otp.map((digit, index) => (
             <TextInput
               key={index}
@@ -172,7 +197,6 @@ export default function OtpEntryScreen() {
                 styles.otpInput,
                 digit && styles.otpInputFilled,
                 isLocked && styles.otpInputLocked,
-                error && styles.otpInputError,
               ]}
               value={digit}
               onChangeText={(text) => handleOtpChange(text, index)}
@@ -196,24 +220,30 @@ export default function OtpEntryScreen() {
           onPress={handleVerify}
           disabled={otp.join('').length !== 6 || isVerifying || isLocked}
         >
-          <Text style={styles.verifyButtonText}>
-            {isVerifying ? 'Verifying...' : 'Verify'}
-          </Text>
+          {isVerifying ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.verifyButtonText}>Verify</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.resendContainer}
           onPress={handleResend}
-          disabled={resendCooldown > 0 || isVerifying}
+          disabled={resendCooldown > 0 || isVerifying || isResending}
         >
-          <Text style={[
-            styles.resendText,
-            resendCooldown > 0 && styles.resendTextDisabled,
-          ]}>
-            {resendCooldown > 0 
-              ? `Resend code in ${resendCooldown}s` 
-              : "Didn't get it? Resend code"}
-          </Text>
+          {isResending ? (
+            <ActivityIndicator color="#3FC6B8" size="small" />
+          ) : (
+            <Text style={[
+              styles.resendText,
+              resendCooldown > 0 && styles.resendTextDisabled,
+            ]}>
+              {resendCooldown > 0 
+                ? `Resend code in ${resendCooldown}s` 
+                : "Didn't get it? Resend code"}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -238,9 +268,8 @@ const styles = StyleSheet.create({
     color: '#3FC6B8',
   },
   title: {
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontSize: 26,
     fontWeight: '700',
+    fontSize: 26,
     color: '#F3F3F4',
     marginTop: 16,
     marginBottom: 8,
@@ -249,7 +278,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9AA0AC',
     marginBottom: 32,
-    fontFamily: 'IBMPlexMono_400Regular',
   },
   otpContainer: {
     flexDirection: 'row',
@@ -267,7 +295,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#F3F3F4',
     backgroundColor: '#1C1F26',
-    fontFamily: 'IBMPlexMono_400Regular',
   },
   otpInputFilled: {
     borderColor: '#3FC6B8',
@@ -276,14 +303,10 @@ const styles = StyleSheet.create({
     borderColor: '#E5484D',
     backgroundColor: 'rgba(229, 72, 77, 0.08)',
   },
-  otpInputError: {
-    borderColor: '#E5484D',
-  },
   demoNote: {
     fontSize: 12,
     color: '#6B7280',
     marginBottom: 8,
-    fontFamily: 'IBMPlexMono_400Regular',
   },
   errorText: {
     color: '#E5484D',

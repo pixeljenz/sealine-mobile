@@ -1,4 +1,8 @@
 // app/phone-entry.tsx
+// ONB-1.2 — Phone number entry + country code
+// Per PRD Scenarios 1.2–1.4: Country code selector, validates before Continue enables.
+// Cannot proceed with incomplete/invalid number.
+
 import React, { useState } from 'react';
 import {
   View,
@@ -10,32 +14,32 @@ import {
   Alert,
   ScrollView,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { mockOnboardingApi } from '@/api/mockOnboardingApi';
 
-// Country codes
 const COUNTRY_CODES = [
-  { code: '+1', country: 'USA/Canada' },
-  { code: '+91', country: 'India' },
-  { code: '+44', country: 'UK' },
-  { code: '+61', country: 'Australia' },
-  { code: '+81', country: 'Japan' },
-  { code: '+86', country: 'China' },
-  { code: '+49', country: 'Germany' },
-  { code: '+33', country: 'France' },
-  { code: '+39', country: 'Italy' },
-  { code: '+55', country: 'Brazil' },
-  { code: '+82', country: 'South Korea' },
-  { code: '+65', country: 'Singapore' },
-  { code: '+60', country: 'Malaysia' },
-  { code: '+971', country: 'UAE' },
-  { code: '+966', country: 'Saudi Arabia' },
-  { code: '+34', country: 'Spain' },
-  { code: '+31', country: 'Netherlands' },
-  { code: '+46', country: 'Sweden' },
-  { code: '+41', country: 'Switzerland' },
-  { code: '+52', country: 'Mexico' },
+  { code: '+1', country: 'USA/Canada', minLength: 10, maxLength: 10 },
+  { code: '+91', country: 'India', minLength: 10, maxLength: 10 },
+  { code: '+44', country: 'UK', minLength: 10, maxLength: 10 },
+  { code: '+61', country: 'Australia', minLength: 9, maxLength: 10 },
+  { code: '+81', country: 'Japan', minLength: 10, maxLength: 10 },
+  { code: '+86', country: 'China', minLength: 11, maxLength: 11 },
+  { code: '+49', country: 'Germany', minLength: 10, maxLength: 11 },
+  { code: '+33', country: 'France', minLength: 9, maxLength: 9 },
+  { code: '+39', country: 'Italy', minLength: 10, maxLength: 10 },
+  { code: '+55', country: 'Brazil', minLength: 10, maxLength: 11 },
+  { code: '+82', country: 'South Korea', minLength: 10, maxLength: 10 },
+  { code: '+65', country: 'Singapore', minLength: 8, maxLength: 8 },
+  { code: '+60', country: 'Malaysia', minLength: 9, maxLength: 10 },
+  { code: '+971', country: 'UAE', minLength: 9, maxLength: 9 },
+  { code: '+966', country: 'Saudi Arabia', minLength: 9, maxLength: 9 },
+  { code: '+34', country: 'Spain', minLength: 9, maxLength: 9 },
+  { code: '+31', country: 'Netherlands', minLength: 9, maxLength: 9 },
+  { code: '+46', country: 'Sweden', minLength: 9, maxLength: 9 },
+  { code: '+41', country: 'Switzerland', minLength: 9, maxLength: 9 },
+  { code: '+52', country: 'Mexico', minLength: 10, maxLength: 10 },
 ];
 
 export default function PhoneEntryScreen() {
@@ -47,14 +51,15 @@ export default function PhoneEntryScreen() {
 
   const isValidPhoneNumber = (number: string): boolean => {
     const digitsOnly = number.replace(/\D/g, '');
-    return digitsOnly.length >= 4 && digitsOnly.length <= 15;
+    return digitsOnly.length >= selectedCountry.minLength && 
+           digitsOnly.length <= selectedCountry.maxLength;
   };
 
   const handleContinue = async () => {
     const fullNumber = selectedCountry.code + phoneNumber.replace(/\D/g, '');
     
     if (!isValidPhoneNumber(phoneNumber)) {
-      setError('Please enter a valid phone number.');
+      setError(`Please enter a valid ${selectedCountry.country} phone number (${selectedCountry.minLength}-${selectedCountry.maxLength} digits).`);
       return;
     }
 
@@ -84,6 +89,15 @@ export default function PhoneEntryScreen() {
   const selectCountry = (country: typeof COUNTRY_CODES[0]) => {
     setSelectedCountry(country);
     setShowCountryPicker(false);
+    // Clear error when country changes
+    setError('');
+  };
+
+  const handleNumberChange = (text: string) => {
+    // Only allow digits
+    const digitsOnly = text.replace(/\D/g, '');
+    setPhoneNumber(digitsOnly);
+    setError('');
   };
 
   return (
@@ -104,7 +118,7 @@ export default function PhoneEntryScreen() {
           {/* Country Code */}
           <TouchableOpacity
             style={styles.countryCodeButton}
-            onPress={() => setShowCountryPicker(!showCountryPicker)}
+            onPress={() => setShowCountryPicker(true)}
           >
             <Text style={styles.countryCodeText}>{selectedCountry.code}</Text>
             <Text style={styles.dropdownArrow}>▼</Text>
@@ -113,14 +127,11 @@ export default function PhoneEntryScreen() {
           {/* Phone Number Input */}
           <TextInput
             style={styles.phoneInput}
-            placeholder="98765 43210"
+            placeholder={selectedCountry.country}
             keyboardType="phone-pad"
             value={phoneNumber}
-            onChangeText={(text) => {
-              setPhoneNumber(text);
-              setError('');
-            }}
-            maxLength={15}
+            onChangeText={handleNumberChange}
+            maxLength={selectedCountry.maxLength}
             editable={!isLoading}
             placeholderTextColor="#6B7280"
           />
@@ -136,9 +147,11 @@ export default function PhoneEntryScreen() {
           onPress={handleContinue}
           disabled={!isValidPhoneNumber(phoneNumber) || isLoading}
         >
-          <Text style={styles.continueButtonText}>
-            {isLoading ? 'Sending...' : 'Send code'}
-          </Text>
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.continueButtonText}>Send code</Text>
+          )}
         </TouchableOpacity>
 
         {/* Country Picker Modal */}
@@ -204,9 +217,8 @@ const styles = StyleSheet.create({
     color: '#3FC6B8',
   },
   title: {
-    fontFamily: 'SpaceGrotesk_700Bold',
-    fontSize: 26,
     fontWeight: '700',
+    fontSize: 26,
     color: '#F3F3F4',
     marginTop: 16,
     marginBottom: 8,
@@ -243,7 +255,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#F3F3F4',
-    fontFamily: 'IBMPlexMono_400Regular',
   },
   dropdownArrow: {
     fontSize: 10,
@@ -255,7 +266,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingLeft: 12,
     color: '#F3F3F4',
-    fontFamily: 'IBMPlexMono_400Regular',
   },
   errorText: {
     color: '#E5484D',
