@@ -27,6 +27,8 @@ type OtpSession = {
 };
 
 let activeSession: OtpSession | null = null;
+// Legal acceptance is durable state, separate from a transient OTP session.
+const acceptedLegalNumbers = new Set<string>();
 
 function now() {
   return Date.now();
@@ -47,6 +49,10 @@ export const mockOnboardingApi = {
   async sendOtp(phoneNumber: string): Promise<{ success: true }> {
     await delay(400);
 
+    if (!acceptedLegalNumbers.has(phoneNumber)) {
+      throw new Error('LEGAL_NOT_ACCEPTED');
+    }
+
     // Check if there's already a session and cooldown is active
     if (activeSession?.phoneNumber === phoneNumber) {
       const elapsed = now() - activeSession.sentAt;
@@ -64,7 +70,7 @@ export const mockOnboardingApi = {
       attemptsUsed: 0,
       lockedUntil: null,
       code,
-      legalAccepted: false,
+      legalAccepted: true,
     };
 
     return { success: true };
@@ -73,24 +79,17 @@ export const mockOnboardingApi = {
   // Mark legal acceptance (ONB-1.3)
   async acceptLegal(phoneNumber: string): Promise<{ success: true }> {
     await delay(200);
-    
-    if (!activeSession || activeSession.phoneNumber !== phoneNumber) {
-      throw new Error('NO_ACTIVE_SESSION');
+    acceptedLegalNumbers.add(phoneNumber);
+    if (activeSession?.phoneNumber === phoneNumber) {
+      activeSession.legalAccepted = true;
     }
-    
-    activeSession.legalAccepted = true;
     return { success: true };
   },
 
   // Check if legal has been accepted (ONB-1.3)
   async hasAcceptedLegal(phoneNumber: string): Promise<boolean> {
     await delay(100);
-    
-    if (!activeSession || activeSession.phoneNumber !== phoneNumber) {
-      return false;
-    }
-    
-    return activeSession.legalAccepted;
+    return acceptedLegalNumbers.has(phoneNumber);
   },
 
   // Verify OTP - handles attempts, lockout, expiry (ONB-1.4)

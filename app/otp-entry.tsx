@@ -1,73 +1,166 @@
 // app/otp-entry.tsx
-// ONB-1.4 — OTP entry: attempts, lockout, resend
-// Per PRD Scenarios 1.6–1.9: 3 attempts, inline error with remaining-count,
-// 30s lockout after 3 fails, 30s resend cooldown.
-
-import React, { useState, useEffect, useRef } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View,
+  Platform,
+  Pressable,
+  StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
+  View,
   Alert,
-  ActivityIndicator,
+  KeyboardAvoidingView,
+  Animated,
+  Easing,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
-import { mockOnboardingApi } from '@/api/mockOnboardingApi';
+import { onboardingApi } from '@/api/onboardingApi';
+import { useSession } from '@/hooks/useSession';
 
-export default function OtpEntryScreen() {
+const C = {
+  bg: '#0a0a0b',
+  bg2: '#111113',
+  ink: '#c27b10',
+  inkDim: 'rgba(243,241,236,0.5)',
+  accent: '#c9b48b',
+  ring: 'rgba(255,174,13,0.445)',
+  ringSoft: 'rgba(201,180,139,0.12)',
+  borderSoft: 'rgba(201,180,139,0.22)',
+  text: '#f3f1ec',
+  fail: '#e2684a',
+  success: '#6bcf7f',
+};
+
+export default function OTPEntryScreen() {
   const params = useLocalSearchParams<{ phoneNumber: string }>();
-  const phoneNumber = params.phoneNumber || '';
+  const { createSession } = useSession();
   
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
-  const [attempts, setAttempts] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState(0);
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [error, setError] = useState('');
   const [isResending, setIsResending] = useState(false);
+  const [otpExpired, setOtpExpired] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   
-  const inputRefs = useRef<Array<TextInput | null>>([]);
+  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const lockoutInterval = useRef<NodeJS.Timeout | null>(null);
+  const resendInterval = useRef<NodeJS.Timeout | null>(null);
+  const shakeAnimation = useRef(new Animated.Value(0)).current;
 
-  // Effect for lockout countdown
+  const OTP_EXPIRY_SECONDS = 300;
+  const [otpExpiryTime, setOtpExpiryTime] = useState(Date.now() + OTP_EXPIRY_SECONDS * 1000);
+  const [timeRemaining, setTimeRemaining] = useState(OTP_EXPIRY_SECONDS);
+
+  // Countdown for OTP expiry
   useEffect(() => {
-    if (lockoutSeconds > 0) {
-      const timer = setInterval(() => {
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.floor((otpExpiryTime - Date.now()) / 1000));
+      setTimeRemaining(remaining);
+      
+      if (remaining === 0) {
+        setOtpExpired(true);
+        clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [otpExpiryTime]);
+
+  // Handle lockout countdown
+  useEffect(() => {
+    if (isLocked && lockoutSeconds > 0) {
+      lockoutInterval.current = setInterval(() => {
         setLockoutSeconds((prev) => {
           if (prev <= 1) {
             setIsLocked(false);
-            setError('');
+            clearInterval(lockoutInterval.current!);
             return 0;
           }
           return prev - 1;
         });
       }, 1000);
-      return () => clearInterval(timer);
     }
-  }, [lockoutSeconds]);
 
-  // Effect for resend cooldown
+    return () => {
+      if (lockoutInterval.current) {
+        clearInterval(lockoutInterval.current);
+      }
+    };
+  }, [isLocked]);
+
+  // Handle resend cooldown
   useEffect(() => {
     if (resendCooldown > 0) {
-      const timer = setInterval(() => {
-        setResendCooldown((prev) => prev - 1);
+      resendInterval.current = setInterval(() => {
+        setResendCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(resendInterval.current!);
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
-      return () => clearInterval(timer);
     }
+
+    return () => {
+      if (resendInterval.current) {
+        clearInterval(resendInterval.current);
+      }
+    };
   }, [resendCooldown]);
 
-  const handleOtpChange = (text: string, index: number) => {
-    const digit = text.replace(/\D/g, '').slice(-1);
-    
-    const newOtp = [...otp];
-    newOtp[index] = digit;
-    setOtp(newOtp);
+  const shake = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(shakeAnimation, {
+        toValue: 1,
+        duration: 100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shakeAnimation, {
+        toValue: -1,
+        duration: 100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shakeAnimation, {
+        toValue: 0.5,
+        duration: 100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shakeAnimation, {
+        toValue: -0.5,
+        duration: 100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shakeAnimation, {
+        toValue: 0,
+        duration: 100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [shakeAnimation]);
 
-    if (digit && index < 5) {
+  const handleOtpChange = (text: string, index: number) => {
+    const newOtp = [...otp];
+    newOtp[index] = text.slice(-1);
+    setOtp(newOtp);
+    setError(null);
+    setAttemptsRemaining(null);
+
+    if (text && index < 5) {
       inputRefs.current[index + 1]?.focus();
+    }
+
+    if (text && index === 5 && newOtp.every(digit => digit !== '')) {
+      handleVerify();
     }
   };
 
@@ -77,270 +170,456 @@ export default function OtpEntryScreen() {
     }
   };
 
+  /**
+   * ONB-1.7: Handle OTP verification with new-device login handoff
+   * 
+   * After successful OTP verification:
+   * 1. Check if user exists
+   * 2. If existing user, create a new session (which handles the handoff)
+   * 3. Show confirmation message on the new device ONLY
+   * 4. Old devices are silently logged out
+   */
   const handleVerify = async () => {
     const code = otp.join('');
+    
     if (code.length !== 6) {
-      setError('Please enter all 6 digits.');
+      setError('Please enter all 6 digits');
+      shake();
+      return;
+    }
+
+    if (otpExpired) {
+      setError('This code has expired. Request a new one.');
+      shake();
       return;
     }
 
     if (isLocked) {
-      setError(`Please wait ${lockoutSeconds} seconds.`);
+      setError(`Too many attempts. Try again in ${lockoutSeconds}s`);
       return;
     }
 
-    setError('');
-    setIsVerifying(true);
+    setIsLoading(true);
+    setError(null);
 
     try {
-      const result = await mockOnboardingApi.verifyOtp(phoneNumber, code);
-
+      // Step 1: Verify OTP
+      const result = await onboardingApi.verifyOtp({
+        phoneNumber: params.phoneNumber || '',
+        code: code,
+      });
+      
       if (result.status === 'success') {
-        // ONB-1.6: Check if number is registered
-        const isRegistered = await mockOnboardingApi.isNumberRegistered(phoneNumber);
+        // Step 2: Check if user exists
+        const { exists, userId } = await onboardingApi.checkExistingUser({
+          phoneNumber: params.phoneNumber || '',
+        });
         
-        // Clear session
-        mockOnboardingApi.clearSession();
-        
-        if (isRegistered) {
-          // Existing user → go to ChatList (tabs)
-          router.replace('/(tabs)');
+        if (exists && userId) {
+          // 🔄 EXISTING USER - Handle new-device login handoff
+          console.log('🔄 ONB-1.7: Existing user - processing login handoff');
+          
+          // Step 3: Create session (this handles the silent logout)
+          const message = await createSession(userId, params.phoneNumber || '');
+          
+          // Step 4: Show confirmation message on the new device ONLY
+          // This message appears ONLY on this device
+          setConfirmationMessage(message);
+          console.log('✅ ONB-1.7: Confirmation message shown on new device');
+          
+          // Step 5: Navigate to main app
+          // The old devices are already logged out silently
+          setTimeout(() => {
+            router.replace('/(tabs)');
+          }, 1500); // Show message briefly before navigating
         } else {
-          // New user → go to ProfileSetup (ONB-1.5)
+          // 🆕 NEW USER - Go to profile setup
+          console.log('🆕 New user - routing to profile setup');
           router.push({
             pathname: '/profile-setup',
-            params: { phoneNumber }
+            params: { phoneNumber: params.phoneNumber },
           });
         }
       } else if (result.status === 'wrong_code') {
-        setAttempts((prev) => prev + 1);
-        const remaining = result.attemptsRemaining;
-        setError(`Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`);
+        setError(`Incorrect code. ${result.attemptsRemaining} attempts left`);
+        setAttemptsRemaining(result.attemptsRemaining);
+        shake();
         setOtp(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
+      } else if (result.status === 'attempts_exhausted') {
+        setIsLocked(true);
+        setLockoutSeconds(30);
+        setError('Too many attempts. Please wait 30 seconds.');
+        setOtp(['', '', '', '', '', '']);
       } else if (result.status === 'locked_out') {
+        setError(`Too many attempts. Try again in ${result.secondsRemaining}s`);
         setIsLocked(true);
         setLockoutSeconds(result.secondsRemaining);
-        setError(`Too many attempts. Try again in ${result.secondsRemaining}s.`);
-        setOtp(['', '', '', '', '', '']);
-      } else if (result.status === 'expired') {
-        setError('Code expired. Please request a new one.');
-        setOtp(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
       }
-    } catch (error: any) {
-      if (error.message === 'LEGAL_NOT_ACCEPTED') {
-        Alert.alert(
-          'Legal Acceptance Required',
-          'You must accept the Terms of Service and Privacy Policy before verifying.',
-          [{ text: 'Go Back', onPress: () => router.back() }]
-        );
-      } else {
-        setError('Failed to verify code. Please try again.');
-      }
+    } catch (err) {
+      Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
-      setIsVerifying(false);
+      setIsLoading(false);
     }
   };
 
   const handleResend = async () => {
     if (resendCooldown > 0 || isResending) return;
-
+    
     setIsResending(true);
-    setError('');
+    setError(null);
+    setOtpExpired(false);
+    setOtp(['', '', '', '', '', '']);
+    setAttemptsRemaining(null);
+    setIsLocked(false);
+    setLockoutSeconds(0);
+    setOtpExpiryTime(Date.now() + OTP_EXPIRY_SECONDS * 1000);
+    setTimeRemaining(OTP_EXPIRY_SECONDS);
 
     try {
-      await mockOnboardingApi.sendOtp(phoneNumber);
+      await onboardingApi.sendOtp({
+        phoneNumber: params.phoneNumber || '',
+      });
+      
       setResendCooldown(30);
-      setOtp(['', '', '', '', '', '']);
-      inputRefs.current[0]?.focus();
-      
-      // Reset attempts when resending
-      setAttempts(0);
-      setIsLocked(false);
-      setLockoutSeconds(0);
-      
-      Alert.alert('Code Sent', 'A new verification code has been sent.');
-    } catch (error: any) {
-      if (error.message === 'RESEND_COOLDOWN_ACTIVE') {
-        Alert.alert('Please Wait', 'Please wait 30 seconds before requesting another code.');
-      } else {
-        Alert.alert('Error', 'Failed to resend code. Please try again.');
-      }
+      Alert.alert('Code Sent', 'A new verification code has been sent to your phone.');
+    } catch (err) {
+      Alert.alert('Error', 'Failed to resend code. Please try again.');
     } finally {
       setIsResending(false);
     }
   };
 
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const isSubmitDisabled = isLoading || isLocked || otpExpired || otp.some(digit => digit === '');
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <TouchableOpacity 
-          onPress={() => router.back()} 
-          style={styles.backButton}
-          disabled={isVerifying}
-        >
-          <Text style={styles.backText}>← Edit Number</Text>
-        </TouchableOpacity>
+    <LinearGradient
+      colors={[C.bg2, C.bg]}
+      start={{ x: 0.5, y: 0 }}
+      end={{ x: 0.5, y: 0.45 }}
+      style={styles.root}
+    >
+      <View style={styles.top}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={12}>
+          <Text style={styles.backText}>←</Text>
+        </Pressable>
+        <Text style={styles.topLabel}>ONB</Text>
+        <View style={styles.topSpacer} />
+        <Text style={[styles.topLabel, { color: C.inkDim }]}>Version 1.0</Text>
+      </View>
 
-        <Text style={styles.title}>Enter the code</Text>
-        <Text style={styles.subtitle}>
-          Sent to {phoneNumber}
-        </Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.center}
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>Enter verification code</Text>
+          <Text style={styles.sub}>
+            We sent a 6-digit code to {params.phoneNumber || 'your phone'}
+          </Text>
 
-        <View style={styles.otpContainer}>
-          {otp.map((digit, index) => (
-            <TextInput
-              key={index}
-              ref={(ref) => (inputRefs.current[index] = ref)}
-              style={[
-                styles.otpInput,
-                digit && styles.otpInputFilled,
-                isLocked && styles.otpInputLocked,
-              ]}
-              value={digit}
-              onChangeText={(text) => handleOtpChange(text, index)}
-              onKeyPress={(e) => handleKeyPress(e, index)}
-              keyboardType="number-pad"
-              maxLength={1}
-              editable={!isLocked && !isVerifying}
-            />
-          ))}
-        </View>
-
-        <Text style={styles.demoNote}>Demo code: 123456</Text>
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[
-            styles.verifyButton,
-            (otp.join('').length !== 6 || isVerifying || isLocked) && styles.verifyButtonDisabled,
-          ]}
-          onPress={handleVerify}
-          disabled={otp.join('').length !== 6 || isVerifying || isLocked}
-        >
-          {isVerifying ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.verifyButtonText}>Verify</Text>
+          {confirmationMessage && (
+            <View style={styles.confirmationBanner}>
+              <Text style={styles.confirmationText}>✅ {confirmationMessage}</Text>
+            </View>
           )}
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.resendContainer}
-          onPress={handleResend}
-          disabled={resendCooldown > 0 || isVerifying || isResending}
-        >
-          {isResending ? (
-            <ActivityIndicator color="#3FC6B8" size="small" />
-          ) : (
-            <Text style={[
-              styles.resendText,
-              resendCooldown > 0 && styles.resendTextDisabled,
-            ]}>
-              {resendCooldown > 0 
-                ? `Resend code in ${resendCooldown}s` 
-                : "Didn't get it? Resend code"}
+          {otpExpired && (
+            <View style={styles.expiryWarning}>
+              <Text style={styles.expiryWarningText}>⚠️ Code expired. Request a new one.</Text>
+            </View>
+          )}
+
+          <Animated.View 
+            style={[
+              styles.otpContainer,
+              {
+                transform: [{
+                  translateX: shakeAnimation.interpolate({
+                    inputRange: [-1, 0, 1],
+                    outputRange: [-20, 0, 20],
+                  })
+                }]
+              }
+            ]}
+          >
+            {otp.map((digit, index) => (
+              <TextInput
+                key={index}
+                ref={(ref) => inputRefs.current[index] = ref}
+                style={[
+                  styles.otpInput,
+                  error && styles.otpInputError,
+                  isLocked && styles.otpInputDisabled,
+                  otpExpired && styles.otpInputDisabled,
+                ]}
+                value={digit}
+                onChangeText={(text) => handleOtpChange(text, index)}
+                onKeyPress={(e) => handleKeyPress(e, index)}
+                keyboardType="number-pad"
+                maxLength={1}
+                editable={!isLoading && !isLocked && !otpExpired}
+                autoFocus={index === 0}
+              />
+            ))}
+          </Animated.View>
+
+          {error && (
+            <Text style={[styles.errorText, isLocked && styles.errorLocked]}>
+              {error}
             </Text>
           )}
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+
+          {!isLocked && !otpExpired && timeRemaining > 0 && (
+            <Text style={styles.expiryTimer}>
+              Code expires in {formatTime(timeRemaining)}
+            </Text>
+          )}
+
+          {isLocked && (
+            <View style={styles.lockoutContainer}>
+              <Text style={styles.lockoutText}>
+                Locked for {lockoutSeconds}s
+              </Text>
+              <View style={styles.lockoutBar}>
+                <View 
+                  style={[
+                    styles.lockoutFill,
+                    { width: `${((30 - lockoutSeconds) / 30) * 100}%` }
+                  ]} 
+                />
+              </View>
+            </View>
+          )}
+
+          <Pressable
+            style={[styles.btn, isSubmitDisabled && styles.btnDisabled]}
+            disabled={isSubmitDisabled}
+            onPress={handleVerify}
+          >
+            <Text style={styles.btnText}>
+              {isLoading ? 'Verifying…' : 'Verify'}
+            </Text>
+          </Pressable>
+
+          <View style={styles.resendContainer}>
+            <Text style={styles.resendLabel}>Didn't receive a code?</Text>
+            <Pressable
+              onPress={handleResend}
+              disabled={resendCooldown > 0 || isResending || isLoading}
+            >
+              <Text style={[
+                styles.resendBtn,
+                (resendCooldown > 0 || isResending) && styles.resendBtnDisabled
+              ]}>
+                {isResending ? 'Sending…' : 
+                 resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 
+                 'Resend code'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#15171C',
   },
-  content: {
-    flex: 1,
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: Platform.OS === 'ios' ? 56 : 32,
     paddingHorizontal: 28,
-    paddingTop: 12,
   },
-  backButton: {
-    paddingVertical: 8,
+  backBtn: {
+    padding: 4,
   },
   backText: {
-    fontSize: 16,
-    color: '#3FC6B8',
+    color: C.ink,
+    fontSize: 18,
+    fontWeight: '500',
+  },
+  topSpacer: {
+    flex: 1,
+  },
+  topLabel: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.ink,
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    backgroundColor: C.bg2,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 20,
+    padding: 28,
   },
   title: {
-    fontWeight: '700',
-    fontSize: 26,
-    color: '#F3F3F4',
-    marginTop: 16,
-    marginBottom: 8,
+    color: C.ink,
+    fontSize: 28,
+    lineHeight: 32,
+    marginBottom: 12,
+    fontFamily: 'Fraunces-Black',
   },
-  subtitle: {
+  sub: {
+    color: C.inkDim,
     fontSize: 14,
-    color: '#9AA0AC',
-    marginBottom: 32,
+    lineHeight: 21,
+    marginBottom: 28,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  confirmationBanner: {
+    backgroundColor: C.success + '20',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.success + '40',
+  },
+  confirmationText: {
+    color: C.success,
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Medium',
+    textAlign: 'center',
+  },
+  expiryWarning: {
+    backgroundColor: C.fail + '20',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.fail + '40',
+  },
+  expiryWarningText: {
+    color: C.fail,
+    fontSize: 13,
+    fontFamily: 'SpaceGrotesk-Medium',
+    textAlign: 'center',
   },
   otpContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 10,
+    marginBottom: 16,
   },
   otpInput: {
-    width: 44,
-    height: 54,
-    borderWidth: 1,
-    borderColor: '#2E323C',
+    flex: 1,
+    backgroundColor: C.bg,
+    borderWidth: 1.5,
+    borderColor: C.borderSoft,
     borderRadius: 12,
+    paddingVertical: 14,
     textAlign: 'center',
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#F3F3F4',
-    backgroundColor: '#1C1F26',
+    color: C.text,
+    fontSize: 24,
+    fontFamily: 'SpaceGrotesk-Medium',
+    minHeight: 56,
   },
-  otpInputFilled: {
-    borderColor: '#3FC6B8',
+  otpInputError: {
+    borderColor: C.fail,
   },
-  otpInputLocked: {
-    borderColor: '#E5484D',
-    backgroundColor: 'rgba(229, 72, 77, 0.08)',
-  },
-  demoNote: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 8,
+  otpInputDisabled: {
+    opacity: 0.4,
+    borderColor: C.borderSoft,
   },
   errorText: {
-    color: '#E5484D',
+    color: C.fail,
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 12,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  errorLocked: {
+    color: C.ring,
+  },
+  expiryTimer: {
+    color: C.inkDim,
     fontSize: 12,
-    marginBottom: 8,
-    minHeight: 16,
+    textAlign: 'center',
+    marginBottom: 16,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  verifyButton: {
-    backgroundColor: '#0F9C90',
-    borderRadius: 14,
-    height: 56,
+  lockoutContainer: {
+    marginBottom: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
   },
-  verifyButtonDisabled: {
+  lockoutText: {
+    color: C.ring,
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'SpaceGrotesk-Medium',
+    marginBottom: 6,
+  },
+  lockoutBar: {
+    width: '100%',
+    height: 4,
+    backgroundColor: C.borderSoft,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  lockoutFill: {
+    height: '100%',
+    backgroundColor: C.ring,
+    borderRadius: 2,
+  },
+  btn: {
+    backgroundColor: C.ink,
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  btnDisabled: {
     opacity: 0.35,
   },
-  verifyButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
+  btnText: {
+    color: C.bg,
     fontWeight: '600',
+    fontSize: 14,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Medium',
   },
   resendContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 16,
-    paddingVertical: 12,
+    justifyContent: 'center',
+    gap: 8,
   },
-  resendText: {
-    fontSize: 14,
-    color: '#3FC6B8',
-    fontWeight: '500',
+  resendLabel: {
+    color: C.inkDim,
+    fontSize: 13,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  resendTextDisabled: {
-    color: '#4B4F5A',
+  resendBtn: {
+    color: C.ink,
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: 'SpaceGrotesk-Medium',
+    paddingVertical: 4,
+  },
+  resendBtnDisabled: {
+    color: C.inkDim,
+    opacity: 0.5,
   },
 });

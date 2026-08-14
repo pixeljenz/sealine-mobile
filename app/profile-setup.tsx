@@ -1,284 +1,518 @@
 // app/profile-setup.tsx
-// ONB-1.5 — Profile setup
-// Per PRD Scenarios 2.1–2.4: Name required (non-empty), photo optional (default avatar if skipped),
-// about/status pre-filled and editable but never clearable.
-
+import { router, useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
 import {
-  View,
+  Platform,
+  Pressable,
+  StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Image,
-  Alert,
+  View,
+  KeyboardAvoidingView,
   ScrollView,
+  Alert,
+  Image,
+  TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
-import { mockOnboardingApi } from '@/api/mockOnboardingApi';
+import * as ImagePicker from 'expo-image-picker';
+import { onboardingApi } from '@/api/onboardingApi';
 
-const DEFAULT_ABOUT = "Hey there! I'm using Sealine.";
-const DEFAULT_AVATAR = 'https://ui-avatars.com/api/?name=User&background=0F9C90&color=fff&size=100&bold=true';
+const C = {
+  bg: '#0a0a0b',
+  bg2: '#111113',
+  ink: '#c27b10',
+  inkDim: 'rgba(243,241,236,0.5)',
+  accent: '#c9b48b',
+  ring: 'rgba(255,174,13,0.445)',
+  ringSoft: 'rgba(201,180,139,0.12)',
+  borderSoft: 'rgba(201,180,139,0.22)',
+  text: '#f3f1ec',
+  fail: '#e2684a',
+  success: '#6bcf7f',
+};
+
+// Default values
+const DEFAULT_ABOUT = 'Hey there! I\'m using ONB';
 
 export default function ProfileSetupScreen() {
   const params = useLocalSearchParams<{ phoneNumber: string }>();
-  const phoneNumber = params.phoneNumber || '';
-  
   const [name, setName] = useState('');
-  const [about, setAbout] = useState(DEFAULT_ABOUT);
   const [photo, setPhoto] = useState<string | null>(null);
+  const [about, setAbout] = useState(DEFAULT_ABOUT);
   const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState({ name: '', about: '' });
+  const [isPickingImage, setIsPickingImage] = useState(false);
 
-  const isValid = name.trim().length > 0 && about.trim().length > 0;
-
-  const validate = () => {
-    const newErrors = { name: '', about: '' };
-    
-    // Name: required, non-empty, not just spaces
-    if (!name.trim()) {
-      newErrors.name = 'Name is required';
-    }
-    
-    // About: required, cannot be empty
-    if (!about.trim()) {
-      newErrors.about = 'About is required';
-    }
-    
-    setErrors(newErrors);
-    return !newErrors.name && !newErrors.about;
+  // Validation: check for actual visible characters
+  const hasVisibleChars = (text: string): boolean => {
+    return text.trim().length > 0;
   };
 
+  const isNameValid = hasVisibleChars(name);
+  const isFormValid = isNameValid;
+
+  // About field handler - reverts to default if cleared
+  const handleAboutChange = (text: string) => {
+    // If text is empty or only whitespace, revert to default
+    if (!text.trim()) {
+      setAbout(DEFAULT_ABOUT);
+    } else {
+      setAbout(text);
+    }
+  };
+
+  // Photo picker handlers
+  const handlePickImage = async () => {
+    try {
+      setIsPickingImage(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setPhoto(result.assets[0].uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    } finally {
+      setIsPickingImage(false);
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      setIsPickingImage(true);
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant camera permissions to take a photo.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setPhoto(result.assets[0].uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to take photo. Please try again.');
+    } finally {
+      setIsPickingImage(false);
+    }
+  };
+
+  const showPhotoOptions = () => {
+    Alert.alert(
+      'Profile Photo',
+      'Choose a photo for your profile',
+      [
+        { text: 'Take Photo', onPress: handleTakePhoto },
+        { text: 'Choose from Library', onPress: handlePickImage },
+        { text: 'Remove Photo', onPress: () => setPhoto(null), style: 'destructive' },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { userInterfaceStyle: 'dark' }
+    );
+  };
+
+  // Get initials for default avatar
+  const getInitials = (): string => {
+    if (!name.trim()) return '?';
+    const parts = name.trim().split(' ');
+    if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  };
+
+  // Submit handler
   const handleContinue = async () => {
-    if (!validate()) return;
+    // Validate name has visible characters
+    if (!isFormValid) {
+      Alert.alert('Name Required', 'Please enter your name to continue.');
+      return;
+    }
 
     setIsLoading(true);
-    
+
     try {
-      // Call mock API to create profile
-      await mockOnboardingApi.createProfile({
-        phoneNumber,
+      const result = await onboardingApi.createProfile({
+        phoneNumber: params.phoneNumber || '',
         name: name.trim(),
-        about: about.trim(),
-        photo: photo,
+        photo: photo || undefined,
+        about: about.trim() || DEFAULT_ABOUT,
       });
-      
-      // Navigate to device handoff (ONB-1.7)
-      router.push('/device-handoff');
+
+      // Success - navigate to main app
+      router.replace('/(tabs)'); // Adjust to your main app route
     } catch (error: any) {
-      if (error.message === 'NAME_REQUIRED') {
-        setErrors(prev => ({ ...prev, name: 'Name is required' }));
-      } else if (error.message === 'ABOUT_REQUIRED') {
-        setErrors(prev => ({ ...prev, about: 'About is required' }));
-      } else {
-        Alert.alert('Error', 'Failed to create profile. Please try again.');
-      }
+      Alert.alert(
+        'Error', 
+        error.message || 'Failed to set up profile. Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleAboutChange = (text: string) => {
-    // If user tries to clear it completely, revert to default
-    if (text.trim().length === 0 && about.trim().length === 0) {
-      setAbout(DEFAULT_ABOUT);
-      return;
-    }
-    setAbout(text);
-    if (errors.about) setErrors({ ...errors, about: '' });
-  };
-
-  const handleAddPhoto = () => {
-    Alert.alert('Add Photo', 'Choose a source:', [
-      { text: 'Take Photo', onPress: () => console.log('Camera - TODO') },
-      { text: 'Choose from Gallery', onPress: () => console.log('Gallery - TODO') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
-
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+    <LinearGradient
+      colors={[C.bg2, C.bg]}
+      start={{ x: 0.5, y: 0 }}
+      end={{ x: 0.5, y: 0.45 }}
+      style={styles.root}
+    >
+      {/* Header */}
+      <View style={styles.top}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={12}>
+          <Text style={styles.backText}>←</Text>
+        </Pressable>
+        <Text style={styles.topLabel}>ONB</Text>
+        <View style={styles.topSpacer} />
+        <Text style={[styles.topLabel, { color: C.inkDim }]}>Version 1.0</Text>
+      </View>
 
-        <Text style={styles.title}>Set up your profile</Text>
-        <Text style={styles.subtitle}>This is how you'll appear to people you message.</Text>
-
-        <TouchableOpacity style={styles.avatarContainer} onPress={handleAddPhoto}>
-          <Image
-            source={{ uri: photo || DEFAULT_AVATAR }}
-            style={styles.avatar}
-          />
-          <View style={styles.avatarOverlay}>
-            <Text style={styles.avatarOverlayText}>Add photo</Text>
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Name <Text style={styles.required}>*</Text></Text>
-          <TextInput
-            style={[styles.input, errors.name && styles.inputError]}
-            placeholder="Your name"
-            value={name}
-            onChangeText={(text) => {
-              setName(text);
-              if (errors.name) setErrors({ ...errors, name: '' });
-            }}
-            maxLength={50}
-            editable={!isLoading}
-            placeholderTextColor="#6B7280"
-          />
-          {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>About <Text style={styles.required}>*</Text></Text>
-          <TextInput
-            style={[styles.input, styles.aboutInput, errors.about && styles.inputError]}
-            placeholder="What's on your mind?"
-            value={about}
-            onChangeText={handleAboutChange}
-            maxLength={140}
-            multiline
-            editable={!isLoading}
-            placeholderTextColor="#6B7280"
-          />
-          {errors.about ? <Text style={styles.errorText}>{errors.about}</Text> : null}
-          <Text style={styles.charCount}>{about.length}/140</Text>
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.continueButton,
-            (!isValid || isLoading) && styles.continueButtonDisabled,
-          ]}
-          onPress={handleContinue}
-          disabled={!isValid || isLoading}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.center}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.continueButtonText}>Start messaging</Text>
-          )}
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+          <View style={styles.card}>
+            <Text style={styles.title}>Set up your profile</Text>
+            <Text style={styles.sub}>
+              Tell us about yourself. You can always change this later.
+            </Text>
+
+            {/* Profile Photo - Optional */}
+            <View style={styles.photoSection}>
+              <TouchableOpacity 
+                style={styles.photoContainer} 
+                onPress={showPhotoOptions}
+                disabled={isLoading || isPickingImage}
+              >
+                {photo ? (
+                  <Image source={{ uri: photo }} style={styles.photo} />
+                ) : (
+                  <View style={styles.photoPlaceholder}>
+                    <Text style={styles.photoInitials}>{getInitials()}</Text>
+                  </View>
+                )}
+                {(isPickingImage || isLoading) && (
+                  <View style={styles.photoLoading}>
+                    <ActivityIndicator size="small" color={C.ink} />
+                  </View>
+                )}
+                <View style={styles.photoEditBadge}>
+                  <Text style={styles.photoEditIcon}>📷</Text>
+                </View>
+              </TouchableOpacity>
+              <Text style={styles.photoHint}>Tap to add a photo (optional)</Text>
+            </View>
+
+            {/* Name Field - Required */}
+            <View style={styles.fieldGroup}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>Full Name</Text>
+                <Text style={styles.required}>required</Text>
+              </View>
+              <View style={[
+                styles.inputWrap,
+                !isNameValid && name.length > 0 && styles.inputError
+              ]}>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  placeholder="Enter your full name"
+                  placeholderTextColor={C.inkDim}
+                  autoCapitalize="words"
+                  autoComplete="name"
+                  returnKeyType="next"
+                  editable={!isLoading}
+                  onChangeText={setName}
+                />
+              </View>
+              {name.length > 0 && !isNameValid && (
+                <Text style={styles.errorText}>Name cannot be empty or only spaces</Text>
+              )}
+              {isNameValid && name.length > 0 && (
+                <Text style={styles.successText}>✓ Looks good</Text>
+              )}
+            </View>
+
+            {/* About/Status Field - Pre-filled, editable, can't be empty */}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>About / Status</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  style={[styles.input, styles.aboutInput]}
+                  value={about}
+                  placeholder="What's on your mind?"
+                  placeholderTextColor={C.inkDim}
+                  autoCapitalize="sentences"
+                  returnKeyType="done"
+                  editable={!isLoading}
+                  onChangeText={handleAboutChange}
+                  multiline
+                  numberOfLines={2}
+                  maxLength={80}
+                />
+              </View>
+              <Text style={styles.charCount}>{about.length}/80</Text>
+              <Text style={styles.hint}>
+                Can't be fully empty - it'll revert to default if you clear it
+              </Text>
+            </View>
+
+            {/* Submit Button */}
+            <Pressable
+              style={[styles.btn, (!isFormValid || isLoading) && styles.btnDisabled]}
+              disabled={!isFormValid || isLoading}
+              onPress={handleContinue}
+            >
+              <Text style={styles.btnText}>
+                {isLoading ? 'Setting up…' : 'Continue'}
+              </Text>
+            </Pressable>
+
+            <Text style={styles.phoneNote}>
+              Phone: {params.phoneNumber || 'your number'}
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#15171C',
   },
-  content: {
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: Platform.OS === 'ios' ? 56 : 32,
     paddingHorizontal: 28,
-    paddingTop: 12,
-    paddingBottom: 32,
   },
-  backButton: {
-    paddingVertical: 8,
+  backBtn: {
+    padding: 4,
   },
   backText: {
-    fontSize: 16,
-    color: '#3FC6B8',
+    color: C.ink,
+    fontSize: 18,
+    fontWeight: '500',
+  },
+  topSpacer: {
+    flex: 1,
+  },
+  topLabel: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.ink,
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  center: {
+    flex: 1,
+    paddingHorizontal: 24,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    backgroundColor: C.bg2,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 20,
+    padding: 28,
   },
   title: {
-    fontWeight: '700',
-    fontSize: 26,
-    color: '#F3F3F4',
-    marginTop: 8,
+    color: C.ink,
+    fontSize: 28,
+    lineHeight: 32,
+    marginBottom: 12,
+    fontFamily: 'Fraunces-Black',
   },
-  subtitle: {
+  sub: {
+    color: C.inkDim,
     fontSize: 14,
-    color: '#9AA0AC',
-    marginBottom: 32,
-    lineHeight: 20,
+    lineHeight: 21,
+    marginBottom: 28,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  avatarContainer: {
+  photoSection: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 28,
+  },
+  photoContainer: {
     position: 'relative',
-  },
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#1C1F26',
-    borderWidth: 1.5,
-    borderColor: '#2E323C',
-    borderStyle: 'dashed',
-  },
-  avatarOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    backgroundColor: 'rgba(15, 156, 144, 0.9)',
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  avatarOverlayText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  inputGroup: {
-    marginBottom: 22,
-  },
-  label: {
-    fontSize: 12,
-    color: '#9AA0AC',
     marginBottom: 8,
   },
-  required: {
-    color: '#E5484D',
+  photo: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 2,
+    borderColor: C.ring,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#2E323C',
+  photoPlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: C.bg,
+    borderWidth: 2,
+    borderColor: C.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoInitials: {
+    fontSize: 32,
+    color: C.ink,
+    fontFamily: 'Fraunces-Black',
+  },
+  photoLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 50,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: C.ink,
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: C.bg2,
+  },
+  photoEditIcon: {
+    fontSize: 14,
+  },
+  photoHint: {
+    color: C.inkDim,
+    fontSize: 12,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  fieldGroup: {
+    marginBottom: 20,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  label: {
+    color: C.accent,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  required: {
+    color: C.ink,
+    fontSize: 10,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  inputWrap: {
+    borderWidth: 1.5,
+    borderColor: C.borderSoft,
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#F3F3F4',
-    backgroundColor: '#1C1F26',
+    backgroundColor: C.bg,
+    overflow: 'hidden',
   },
   inputError: {
-    borderColor: '#E5484D',
+    borderColor: C.fail,
+  },
+  input: {
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: C.text,
+    fontSize: 15,
+    fontFamily: 'SpaceGrotesk-Regular',
+    minHeight: 48,
   },
   aboutInput: {
-    minHeight: 64,
+    minHeight: 60,
     textAlignVertical: 'top',
   },
   errorText: {
-    color: '#E5484D',
+    color: C.fail,
     fontSize: 11.5,
     marginTop: 4,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  successText: {
+    color: C.success,
+    fontSize: 11.5,
+    marginTop: 4,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
   charCount: {
-    color: '#6B7280',
-    fontSize: 11,
+    color: C.inkDim,
+    fontSize: 10,
     textAlign: 'right',
     marginTop: 4,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  continueButton: {
-    backgroundColor: '#0F9C90',
-    borderRadius: 14,
-    height: 56,
+  hint: {
+    color: C.inkDim,
+    fontSize: 11,
+    marginTop: 4,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  btn: {
+    backgroundColor: C.ink,
+    borderRadius: 12,
+    paddingVertical: 16,
     alignItems: 'center',
-    justifyContent: 'center',
     marginTop: 8,
   },
-  continueButtonDisabled: {
+  btnDisabled: {
     opacity: 0.35,
   },
-  continueButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
+  btnText: {
+    color: C.bg,
     fontWeight: '600',
+    fontSize: 14,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  phoneNote: {
+    color: C.inkDim,
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 14,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
 });

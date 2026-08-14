@@ -1,266 +1,256 @@
 // app/legal-acceptance.tsx
-// ONB-1.3 — Legal acceptance gate before OTP
-// Per PRD Scenario 1.12, PRD §5.1: Acceptance screen shown before OTP entry;
-// single explicit action; bundles 16+ age confirmation. Cannot reach OTP without it.
-
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  Linking,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { mockOnboardingApi } from '@/api/mockOnboardingApi';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useState } from 'react';
+import {
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+
+const C = {
+  bg: '#0a0a0b',
+  bg2: '#111113',
+  ink: '#c27b10',
+  inkDim: 'rgba(243,241,236,0.5)',
+  accent: '#c9b48b',
+  ringSoft: 'rgba(201,180,139,0.12)',
+  borderSoft: 'rgba(201,180,139,0.22)',
+  text: '#f3f1ec',
+};
 
 export default function LegalAcceptanceScreen() {
   const params = useLocalSearchParams<{ phoneNumber: string }>();
-  const phoneNumber = params.phoneNumber || '';
   const [accepted, setAccepted] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Check if legal was already accepted (in case user goes back)
-  useEffect(() => {
-    const checkLegal = async () => {
-      try {
-        const hasAccepted = await mockOnboardingApi.hasAcceptedLegal(phoneNumber);
-        if (hasAccepted) {
-          setAccepted(true);
-        }
-      } catch (error) {
-        // Ignore - session might not exist
-      }
-    };
-    checkLegal();
-  }, [phoneNumber]);
-
-  const handleAccept = async () => {
-    setIsLoading(true);
-    
-    try {
-      // Record legal acceptance in mock API (ONB-1.3 backend enforcement)
-      await mockOnboardingApi.acceptLegal(phoneNumber);
-      
-      // Navigate to OTP entry
-      router.push({
-        pathname: '/otp-entry',
-        params: { phoneNumber }
-      });
-    } catch (error: any) {
-      if (error.message === 'NO_ACTIVE_SESSION') {
-        Alert.alert(
-          'Session Expired',
-          'Please go back and enter your phone number again.'
-        );
-        router.back();
-      } else {
-        Alert.alert('Error', 'Failed to save acceptance. Please try again.');
-      }
-    } finally {
-      setIsLoading(false);
-    }
+  const handleAccept = () => {
+    router.push({
+      pathname: '/otp-entry',
+      params: { phoneNumber: params.phoneNumber },
+    });
   };
 
   const openTerms = () => {
-    // TODO: Replace with actual Terms URL
     Linking.openURL('https://example.com/terms');
   };
 
   const openPrivacy = () => {
-    // TODO: Replace with actual Privacy Policy URL
     Linking.openURL('https://example.com/privacy');
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+    <LinearGradient
+      colors={[C.bg2, C.bg]}
+      start={{ x: 0.5, y: 0 }}
+      end={{ x: 0.5, y: 0.45 }}
+      style={styles.root}
+    >
+      <View style={styles.top}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={12}>
+          <Text style={styles.backText}>←</Text>
+        </Pressable>
+        <Text style={styles.topLabel}>ONB</Text>
+        <View style={styles.topSpacer} />
+        <Text style={[styles.topLabel, { color: C.inkDim }]}>Version 1.0</Text>
+      </View>
 
-        <Text style={styles.title}>Terms of Service & Privacy Policy</Text>
+      <View style={styles.center}>
+        <View style={styles.card}>
+          <Text style={styles.title}>Before we continue</Text>
+          <Text style={styles.sub}>Please review and accept our policies to proceed.</Text>
 
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-          <Text style={styles.summary}>
-            By using this app, you agree to our Terms of Service and Privacy Policy.
-            {'\n\n'}
-            You confirm that you are 16 years of age or older.
-          </Text>
+          <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+            <Text style={styles.summary}>
+              By using this app, you agree to our Terms of Service and Privacy Policy.
+              {'\n\n'}
+              You confirm that you are 16 years of age or older.
+            </Text>
 
-          <View style={styles.divider} />
+            <View style={styles.divider} />
 
-          <TouchableOpacity onPress={openTerms} style={styles.linkButton}>
-            <Text style={styles.linkText}>📄 Read Full Terms of Service</Text>
-          </TouchableOpacity>
+            <Pressable onPress={openTerms} style={styles.linkRow}>
+              <Text style={styles.linkText}>Read Full Terms of Service</Text>
+              <Text style={styles.linkArrow}>→</Text>
+            </Pressable>
 
-          <TouchableOpacity onPress={openPrivacy} style={styles.linkButton}>
-            <Text style={styles.linkText}>🔒 Read Privacy Policy</Text>
-          </TouchableOpacity>
+            <Pressable onPress={openPrivacy} style={styles.linkRow}>
+              <Text style={styles.linkText}>Read Privacy Policy</Text>
+              <Text style={styles.linkArrow}>→</Text>
+            </Pressable>
 
-          <View style={styles.spacer} />
-        </ScrollView>
+            <View style={styles.spacer} />
+          </ScrollView>
 
-        {/* Single explicit acceptance action - bundles 16+ age confirmation */}
-        <TouchableOpacity
-          style={[
-            styles.acceptButton,
-            accepted && styles.acceptButtonActive,
-            isLoading && styles.acceptButtonDisabled,
-          ]}
-          onPress={handleAccept}
-          disabled={accepted || isLoading}
-          activeOpacity={0.7}
-        >
-          <View style={styles.checkboxContainer}>
+          <Pressable
+            style={styles.checkboxRow}
+            onPress={() => setAccepted(!accepted)}
+            hitSlop={8}
+          >
             <View style={[styles.checkbox, accepted && styles.checkboxChecked]}>
               {accepted && <Text style={styles.checkmark}>✓</Text>}
             </View>
             <Text style={styles.checkboxLabel}>
               I accept the Terms of Service and Privacy Policy
             </Text>
-          </View>
-        </TouchableOpacity>
+          </Pressable>
 
-        <TouchableOpacity
-          style={[
-            styles.continueButton,
-            (!accepted || isLoading) && styles.continueButtonDisabled,
-          ]}
-          onPress={handleAccept}
-          disabled={!accepted || isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.continueButtonText}>Continue</Text>
-          )}
-        </TouchableOpacity>
-
-        <Text style={styles.ageNote}>You confirm you are 16 years or older</Text>
+          <Pressable
+            style={[styles.btn, !accepted && styles.btnDisabled]}
+            disabled={!accepted}
+            onPress={handleAccept}
+          >
+            <Text style={styles.btnText}>Continue</Text>
+          </Pressable>
+        </View>
       </View>
-    </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#15171C',
   },
-  content: {
-    flex: 1,
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: Platform.OS === 'ios' ? 56 : 32,
     paddingHorizontal: 28,
-    paddingTop: 12,
   },
-  backButton: {
-    paddingVertical: 8,
+  backBtn: {
+    padding: 4,
+  },
+  topSpacer: {
+    flex: 1,
   },
   backText: {
-    fontSize: 16,
-    color: '#3FC6B8',
+    color: C.ink,
+    fontSize: 18,
+    fontWeight: '500',
+  },
+  topLabel: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.ink,
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '92%',
+    alignSelf: 'center',
+    backgroundColor: C.bg2,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 20,
+    padding: 28,
   },
   title: {
-    fontWeight: '700',
-    fontSize: 24,
-    color: '#F3F3F4',
-    marginTop: 8,
-    marginBottom: 16,
+    color: C.ink,
+    fontSize: 28,
+    lineHeight: 32,
+    marginBottom: 12,
+    fontFamily: 'Fraunces-Black',
   },
-  scrollView: {
-    flex: 1,
+  sub: {
+    color: C.inkDim,
+    fontSize: 14,
+    lineHeight: 21,
+    marginBottom: 20,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  scroll: {
+    flexGrow: 0,
   },
   summary: {
-    fontSize: 16,
-    color: '#D7DAE0',
+    color: C.text,
+    fontSize: 15,
     lineHeight: 24,
-    marginBottom: 8,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
   divider: {
     height: 1,
-    backgroundColor: '#2E323C',
-    marginVertical: 12,
+    backgroundColor: C.borderSoft,
+    marginVertical: 18,
   },
-  linkButton: {
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2E323C',
-  },
-  linkText: {
-    fontSize: 16,
-    color: '#3FC6B8',
-  },
-  spacer: {
-    height: 24,
-  },
-  acceptButton: {
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#2E323C',
-    marginTop: 8,
-  },
-  acceptButtonActive: {
-    borderColor: '#0F9C90',
-    backgroundColor: 'rgba(15, 156, 144, 0.05)',
-  },
-  acceptButtonDisabled: {
-    opacity: 0.5,
-  },
-  checkboxContainer: {
+  linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSoft,
+  },
+  linkText: {
+    color: C.accent,
+    fontSize: 15,
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  linkArrow: {
+    color: C.ink,
+    fontSize: 16,
+  },
+  spacer: {
+    height: 20,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 14,
+    marginTop: 8,
   },
   checkbox: {
     width: 24,
     height: 24,
     borderWidth: 2,
-    borderColor: '#4B4F5A',
+    borderColor: C.accent,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+    marginTop: 2,
   },
   checkboxChecked: {
-    backgroundColor: '#0F9C90',
-    borderColor: '#0F9C90',
+    backgroundColor: C.ink,
+    borderColor: C.ink,
   },
   checkmark: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: C.bg,
+    fontSize: 15,
     fontWeight: '700',
   },
   checkboxLabel: {
     fontSize: 15,
-    color: '#F3F3F4',
+    color: C.text,
     flex: 1,
-    lineHeight: 22,
+    lineHeight: 24,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  continueButton: {
-    backgroundColor: '#0F9C90',
-    borderRadius: 14,
-    height: 56,
+  btn: {
+    backgroundColor: C.ink,
+    borderRadius: 12,
+    paddingVertical: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 16,
   },
-  continueButtonDisabled: {
-    opacity: 0.35,
-  },
-  continueButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
+  btnDisabled: { opacity: 0.35 },
+  btnText: {
+    color: C.bg,
     fontWeight: '600',
-  },
-  ageNote: {
-    textAlign: 'center',
-    color: '#6B7280',
-    fontSize: 11,
-    marginTop: 12,
-    marginBottom: 24,
+    fontSize: 14,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Medium',
   },
 });

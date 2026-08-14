@@ -1,348 +1,412 @@
 // app/phone-entry.tsx
-// ONB-1.2 — Phone number entry + country code
-// Per PRD Scenarios 1.2–1.4: Country code selector, validates before Continue enables.
-// Cannot proceed with incomplete/invalid number.
-
-import React, { useState } from 'react';
+import { onboardingApi } from '@/api/onboardingApi';
+import { COUNTRIES, type Country } from '@/constants/countries';
+import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useMemo, useState } from 'react';
 import {
-  View,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Alert,
-  ScrollView,
-  Modal,
-  ActivityIndicator,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import { mockOnboardingApi } from '@/api/mockOnboardingApi';
 
-const COUNTRY_CODES = [
-  { code: '+1', country: 'USA/Canada', minLength: 10, maxLength: 10 },
-  { code: '+91', country: 'India', minLength: 10, maxLength: 10 },
-  { code: '+44', country: 'UK', minLength: 10, maxLength: 10 },
-  { code: '+61', country: 'Australia', minLength: 9, maxLength: 10 },
-  { code: '+81', country: 'Japan', minLength: 10, maxLength: 10 },
-  { code: '+86', country: 'China', minLength: 11, maxLength: 11 },
-  { code: '+49', country: 'Germany', minLength: 10, maxLength: 11 },
-  { code: '+33', country: 'France', minLength: 9, maxLength: 9 },
-  { code: '+39', country: 'Italy', minLength: 10, maxLength: 10 },
-  { code: '+55', country: 'Brazil', minLength: 10, maxLength: 11 },
-  { code: '+82', country: 'South Korea', minLength: 10, maxLength: 10 },
-  { code: '+65', country: 'Singapore', minLength: 8, maxLength: 8 },
-  { code: '+60', country: 'Malaysia', minLength: 9, maxLength: 10 },
-  { code: '+971', country: 'UAE', minLength: 9, maxLength: 9 },
-  { code: '+966', country: 'Saudi Arabia', minLength: 9, maxLength: 9 },
-  { code: '+34', country: 'Spain', minLength: 9, maxLength: 9 },
-  { code: '+31', country: 'Netherlands', minLength: 9, maxLength: 9 },
-  { code: '+46', country: 'Sweden', minLength: 9, maxLength: 9 },
-  { code: '+41', country: 'Switzerland', minLength: 9, maxLength: 9 },
-  { code: '+52', country: 'Mexico', minLength: 10, maxLength: 10 },
-];
+const C = {
+  bg: '#0a0a0b',
+  bg2: '#111113',
+  ink: '#c27b10',
+  inkDim: 'rgba(243,241,236,0.5)',
+  accent: '#c9b48b',
+  ring: 'rgba(255,174,13,0.445)',
+  ringSoft: 'rgba(201,180,139,0.12)',
+  borderSoft: 'rgba(201,180,139,0.22)',
+  text: '#f3f1ec',
+  fail: '#e2684a',
+};
+
+const INDIA = COUNTRIES.find((c) => c.iso === 'IN') ?? COUNTRIES[0];
+
+function formatDigits(digits: string, format: number[] | null): string {
+  if (!format || !digits) return digits;
+  const parts: string[] = [];
+  let i = 0;
+  for (const g of format) {
+    if (i >= digits.length) break;
+    parts.push(digits.slice(i, i + g));
+    i += g;
+  }
+  if (i < digits.length) parts.push(digits.slice(i));
+  return parts.join(' ');
+}
+
+function lengthLabel(lengths: number[]): string {
+  if (lengths.length === 1) return `${lengths[0]} digits`;
+  return `${lengths[0]}–${lengths[lengths.length - 1]} digits`;
+}
 
 export default function PhoneEntryScreen() {
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRY_CODES[0]);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [selected, setSelected] = useState<Country>(INDIA);
+  const [phone, setPhone] = useState('');
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  const isValidPhoneNumber = (number: string): boolean => {
-    const digitsOnly = number.replace(/\D/g, '');
-    return digitsOnly.length >= selectedCountry.minLength && 
-           digitsOnly.length <= selectedCountry.maxLength;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return COUNTRIES;
+    return COUNTRIES.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.dial.replace(/[^0-9]/g, '').includes(q.replace(/[^0-9]/g, '')) ||
+        c.iso.toLowerCase() === q,
+    );
+  }, [query]);
+
+  const digits = phone.replace(/\D/g, '');
+  const maxLen = selected.lengths[selected.lengths.length - 1];
+  const valid = digits.length > 0 && selected.lengths.includes(digits.length);
+  const placeholder = selected.format
+    ? selected.format.map((g) => 'X'.repeat(g)).join(' ')
+    : 'Enter your number';
+
+  const select = (c: Country) => {
+    setSelected(c);
+    setOpen(false);
+    setQuery('');
+    const d = phone.replace(/\D/g, '').slice(0, c.lengths[c.lengths.length - 1]);
+    setPhone(formatDigits(d, c.format));
+  };
+
+  const handlePhoneChange = (text: string) => {
+    let d = text.replace(/\D/g, '');
+    if (d.length > maxLen) d = d.slice(0, maxLen);
+    setPhone(formatDigits(d, selected.format));
   };
 
   const handleContinue = async () => {
-    const fullNumber = selectedCountry.code + phoneNumber.replace(/\D/g, '');
-    
-    if (!isValidPhoneNumber(phoneNumber)) {
-      setError(`Please enter a valid ${selectedCountry.country} phone number (${selectedCountry.minLength}-${selectedCountry.maxLength} digits).`);
+    const fullNumber = selected.dial + digits;
+
+    if (!valid) {
       return;
     }
 
-    setError('');
     setIsLoading(true);
 
     try {
-      // Send OTP
-      await mockOnboardingApi.sendOtp(fullNumber);
+      // The phone entry screen is the same for new and existing users
+      // The branching happens in the OTP screen after verification
+      console.log('📱 Sending OTP for:', fullNumber);
+      await onboardingApi.sendOtp({ phoneNumber: fullNumber });
       
-      // Navigate to legal acceptance with phone number
+      // Navigate to OTP entry - the user doesn't know if they're new or existing
       router.push({
-        pathname: '/legal-acceptance',
-        params: { phoneNumber: fullNumber }
+        pathname: '/otp-entry',
+        params: { phoneNumber: fullNumber },
       });
-    } catch (error: any) {
-      if (error.message === 'RESEND_COOLDOWN_ACTIVE') {
-        Alert.alert('Please Wait', 'Please wait 30 seconds before requesting another code.');
-      } else {
-        Alert.alert('Error', 'Failed to send verification code. Please try again.');
-      }
+    } catch {
+      Alert.alert('Error', 'Failed to send verification code. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const selectCountry = (country: typeof COUNTRY_CODES[0]) => {
-    setSelectedCountry(country);
-    setShowCountryPicker(false);
-    // Clear error when country changes
-    setError('');
-  };
-
-  const handleNumberChange = (text: string) => {
-    // Only allow digits
-    const digitsOnly = text.replace(/\D/g, '');
-    setPhoneNumber(digitsOnly);
-    setError('');
-  };
-
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.title}>What's your number?</Text>
-        <Text style={styles.subtitle}>
-          We'll send a one-time code to verify it's you.
-        </Text>
-
-        <Text style={styles.fieldLabel}>Phone number</Text>
-
-        <View style={styles.inputContainer}>
-          {/* Country Code */}
-          <TouchableOpacity
-            style={styles.countryCodeButton}
-            onPress={() => setShowCountryPicker(true)}
-          >
-            <Text style={styles.countryCodeText}>{selectedCountry.code}</Text>
-            <Text style={styles.dropdownArrow}>▼</Text>
-          </TouchableOpacity>
-
-          {/* Phone Number Input */}
-          <TextInput
-            style={styles.phoneInput}
-            placeholder={selectedCountry.country}
-            keyboardType="phone-pad"
-            value={phoneNumber}
-            onChangeText={handleNumberChange}
-            maxLength={selectedCountry.maxLength}
-            editable={!isLoading}
-            placeholderTextColor="#6B7280"
-          />
-        </View>
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[
-            styles.continueButton,
-            (!isValidPhoneNumber(phoneNumber) || isLoading) && styles.continueButtonDisabled,
-          ]}
-          onPress={handleContinue}
-          disabled={!isValidPhoneNumber(phoneNumber) || isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.continueButtonText}>Send code</Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Country Picker Modal */}
-        <Modal
-          visible={showCountryPicker}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowCountryPicker(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Select Country</Text>
-                <TouchableOpacity onPress={() => setShowCountryPicker(false)}>
-                  <Text style={styles.modalClose}>✕</Text>
-                </TouchableOpacity>
-              </View>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {COUNTRY_CODES.map((country) => (
-                  <TouchableOpacity
-                    key={country.code}
-                    style={[
-                      styles.countryOption,
-                      selectedCountry.code === country.code && styles.countryOptionSelected,
-                    ]}
-                    onPress={() => selectCountry(country)}
-                  >
-                    <Text style={[
-                      styles.countryOptionText,
-                      selectedCountry.code === country.code && styles.countryOptionTextSelected,
-                    ]}>
-                      {country.country} ({country.code})
-                    </Text>
-                    {selectedCountry.code === country.code && (
-                      <Text style={styles.checkmark}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
+    <LinearGradient
+      colors={[C.bg2, C.bg]}
+      start={{ x: 0.5, y: 0 }}
+      end={{ x: 0.5, y: 0.45 }}
+      style={styles.root}
+    >
+      <View style={styles.top}>
+        <Text style={styles.topLabel}>ONB</Text>
+        <View style={styles.topSpacer} />
+        <Text style={[styles.topLabel, { color: C.inkDim }]}>Version 1.0</Text>
       </View>
-    </SafeAreaView>
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.center}
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>What&apos;s your number?</Text>
+          <Text style={styles.sub}>We&apos;ll send a one-time code to verify it&apos;s you.</Text>
+
+          <Text style={styles.label}>Phone number</Text>
+          <View style={styles.row}>
+            <Pressable style={styles.cc} onPress={() => setOpen(true)} accessibilityRole="button">
+              <Text style={styles.ccFlag}>{selected.flag}</Text>
+              <Text style={styles.ccCode}>{selected.dial}</Text>
+            </Pressable>
+            <TextInput
+              style={styles.num}
+              value={phone}
+              keyboardType="phone-pad"
+              placeholder={placeholder}
+              placeholderTextColor={C.inkDim}
+              editable={!isLoading}
+              onChangeText={handlePhoneChange}
+            />
+          </View>
+          {phone.length > 0 && !valid && (
+            <Text style={styles.error}>
+              Enter a valid {selected.name} number ({lengthLabel(selected.lengths)})
+            </Text>
+          )}
+          <Text style={styles.note}>
+            We&apos;ll send the code to {selected.flag} {selected.dial} {phone.trim() || 'your number'}.
+          </Text>
+
+          <Pressable
+            style={[styles.btn, (!valid || isLoading) && styles.btnDisabled]}
+            disabled={!valid || isLoading}
+            onPress={handleContinue}
+          >
+            <Text style={styles.btnText}>{isLoading ? 'Sending…' : 'Send code'}</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <View style={styles.overlay}>
+          <Pressable style={styles.overlayBackdrop} onPress={() => setOpen(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Select country</Text>
+            <TextInput
+              style={styles.search}
+              value={query}
+              placeholder="Search country or code…"
+              placeholderTextColor={C.inkDim}
+              autoFocus
+              onChangeText={setQuery}
+            />
+            <FlatList
+              style={styles.list}
+              data={filtered}
+              keyExtractor={(item) => item.iso}
+              keyboardShouldPersistTaps="handled"
+              ListEmptyComponent={<Text style={styles.empty}>No countries match</Text>}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={[styles.rowItem, item.iso === selected.iso && styles.rowItemActive]}
+                  onPress={() => select(item)}
+                >
+                  <Text style={styles.rowFlag}>{item.flag}</Text>
+                  <Text
+                    style={[styles.rowName, item.iso === selected.iso && styles.rowNameActive]}
+                    numberOfLines={1}
+                  >
+                    {item.name}
+                  </Text>
+                  <Text style={styles.rowCode}>{item.dial}</Text>
+                </Pressable>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#15171C',
   },
-  content: {
-    flex: 1,
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: Platform.OS === 'ios' ? 56 : 32,
     paddingHorizontal: 28,
-    paddingTop: 12,
   },
-  backButton: {
-    paddingVertical: 8,
+  topSpacer: {
+    flex: 1,
   },
-  backText: {
-    fontSize: 16,
-    color: '#3FC6B8',
+  topLabel: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.ink,
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    backgroundColor: C.bg2,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 20,
+    padding: 28,
   },
   title: {
-    fontWeight: '700',
-    fontSize: 26,
-    color: '#F3F3F4',
-    marginTop: 16,
-    marginBottom: 8,
+    color: C.ink,
+    fontSize: 32,
+    lineHeight: 36,
+    marginBottom: 12,
+    fontFamily: 'Fraunces-Black',
   },
-  subtitle: {
+  sub: {
+    color: C.inkDim,
     fontSize: 14,
-    color: '#9AA0AC',
-    marginBottom: 36,
-    lineHeight: 20,
+    lineHeight: 21,
+    marginBottom: 32,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  fieldLabel: {
-    fontSize: 12,
-    color: '#9AA0AC',
-    marginBottom: 8,
+  label: {
+    color: C.accent,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+    fontFamily: 'SpaceGrotesk-Medium',
   },
-  inputContainer: {
+  row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    gap: 10,
+  },
+  cc: {
+    minWidth: 104,
+    backgroundColor: C.bg,
     borderWidth: 1,
-    borderColor: '#2E323C',
+    borderColor: C.borderSoft,
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 56,
-    backgroundColor: '#1C1F26',
-  },
-  countryCodeButton: {
+    paddingVertical: 14,
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 12,
-    borderRightWidth: 1,
-    borderRightColor: '#2E323C',
-  },
-  countryCodeText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#F3F3F4',
-  },
-  dropdownArrow: {
-    fontSize: 10,
-    color: '#9AA0AC',
-    marginLeft: 4,
-  },
-  phoneInput: {
-    flex: 1,
-    fontSize: 16,
-    paddingLeft: 12,
-    color: '#F3F3F4',
-  },
-  errorText: {
-    color: '#E5484D',
-    fontSize: 11.5,
-    marginTop: 8,
-    minHeight: 14,
-  },
-  continueButton: {
-    backgroundColor: '#0F9C90',
-    borderRadius: 14,
-    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 'auto',
-    marginBottom: 8,
+    gap: 6,
   },
-  continueButtonDisabled: {
-    opacity: 0.35,
-  },
-  continueButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  modalOverlay: {
+  ccFlag: { fontSize: 16 },
+  ccCode: { color: C.text, fontSize: 14, fontFamily: 'SpaceGrotesk-Medium' },
+  num: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: C.text,
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  error: {
+    color: C.fail,
+    fontSize: 11.5,
+    marginTop: 8,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  note: {
+    color: C.inkDim,
+    fontSize: 11,
+    marginTop: 10,
+    lineHeight: 16,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  btn: {
+    marginTop: 28,
+    backgroundColor: C.ink,
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  btnDisabled: { opacity: 0.35 },
+  btnText: {
+    color: C.bg,
+    fontWeight: '600',
+    fontSize: 14,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: 'SpaceGrotesk-Medium',
+  },
+  overlay: {
+    flex: 1,
     justifyContent: 'flex-end',
   },
-  modalContent: {
-    backgroundColor: '#1C1F26',
+  overlayBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  sheet: {
+    maxHeight: '78%',
+    backgroundColor: C.bg2,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: 400,
-    paddingBottom: 20,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    paddingBottom: 12,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2E323C',
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.ring,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 6,
   },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#F3F3F4',
-  },
-  modalClose: {
+  sheetTitle: {
+    color: C.ink,
     fontSize: 18,
-    color: '#9AA0AC',
-    padding: 4,
+    fontFamily: 'SpaceGrotesk-Medium',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
   },
-  countryOption: {
+  search: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 12,
+    color: C.text,
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Regular',
+  },
+  list: { paddingHorizontal: 8 },
+  rowItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2E323C',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
   },
-  countryOptionSelected: {
-    backgroundColor: 'rgba(15, 156, 144, 0.1)',
+  rowItemActive: { backgroundColor: C.ringSoft },
+  rowFlag: { fontSize: 16 },
+  rowName: {
+    flex: 1,
+    color: C.text,
+    fontSize: 14.5,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
-  countryOptionText: {
-    fontSize: 16,
-    color: '#F3F3F4',
-  },
-  countryOptionTextSelected: {
-    color: '#3FC6B8',
-    fontWeight: '600',
-  },
-  checkmark: {
-    color: '#3FC6B8',
-    fontSize: 16,
-    fontWeight: '700',
+  rowNameActive: { color: C.accent },
+  rowCode: { color: C.inkDim, fontSize: 13, fontFamily: 'SpaceGrotesk-Regular' },
+  empty: {
+    color: C.inkDim,
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 28,
+    fontFamily: 'SpaceGrotesk-Regular',
   },
 });

@@ -1,6 +1,18 @@
-// app/splash.tsx
-// ONB-1.1 — Splash screen
-// Per PRD Scenario 1.1: Tap to proceed only — no skip, no guest mode, no access to any other screen.
+/**
+ * OnboardingScreen.tsx
+ *
+ * React Native conversion of the "ONB — Tap to Proceed" HTML screen.
+ *
+ * Dependencies to install:
+ *   expo install expo-linear-gradient expo-font
+ *
+ * Fonts (optional but matches the original design):
+ *   Fraunces (italic + 300/400/800 weights) — https://fonts.google.com/specimen/Fraunces
+ *   Space Grotesk (400/500/600) — https://fonts.google.com/specimen/Space+Grotesk
+ *   Load them with expo-font (see loadFontsAsync below) or drop the .ttf files into
+ *   your assets folder and load via useFonts(). Falls back to system serif/sans if
+ *   not loaded.
+ */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
@@ -15,8 +27,8 @@ import {
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
+import { useRouter } from 'expo-router';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -26,6 +38,7 @@ const COLORS = {
   ink: '#c27b10',
   inkDim: 'rgba(243,241,236,0.5)',
   inkFaint: '#c27b10',
+  accent: '#c9b48b',
   ring: 'rgba(255, 174, 13, 0.445)',
   ringSoft: 'rgba(201,180,139,0.12)',
 };
@@ -52,17 +65,17 @@ const Chevron = ({ style }: { style?: any }) => (
   </Animated.View>
 );
 
-export default function SplashScreen() {
-  const [showNext, setShowNext] = useState(false);
+export default function OnboardingScreen() {
+  const router = useRouter();
   const [ripples, setRipples] = useState<RippleData[]>([]);
   const rippleId = useRef(0);
 
+  // breathing halo/ring animation
   const breathe = useRef(new Animated.Value(0)).current;
+  // chevron rise animation (two staggered chevrons)
   const rise1 = useRef(new Animated.Value(0)).current;
   const rise2 = useRef(new Animated.Value(0)).current;
-  const nextOpacity = useRef(new Animated.Value(0)).current;
 
-  // Breathing animation
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -84,7 +97,6 @@ export default function SplashScreen() {
     return () => loop.stop();
   }, [breathe]);
 
-  // Chevron animations
   useEffect(() => {
     const makeRiseLoop = (val: Animated.Value, delay: number) =>
       Animated.loop(
@@ -133,22 +145,11 @@ export default function SplashScreen() {
         setRipples((prev) => prev.filter((r) => r.id !== id));
       });
 
-      // Show "You're in" overlay then navigate
       setTimeout(() => {
-        setShowNext(true);
-        Animated.timing(nextOpacity, {
-          toValue: 1,
-          duration: 600,
-          easing: Easing.ease,
-          useNativeDriver: true,
-        }).start(() => {
-          setTimeout(() => {
-            router.replace('/phone-entry');
-          }, 400);
-        });
+        router.replace('/phone-entry');
       }, 250);
     },
-    [nextOpacity]
+    [router]
   );
 
   const haloScale = breathe.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.06] });
@@ -159,7 +160,7 @@ export default function SplashScreen() {
   const rise1TranslateY = rise1.interpolate({ inputRange: [0, 1], outputRange: [0, -4] });
   const rise1Opacity = rise1.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0.35] });
   const rise2TranslateY = rise2.interpolate({ inputRange: [0, 1], outputRange: [0, -4] });
-  const rise2Opacity = rise2.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.18] });
+  const rise2Opacity = rise2.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.18] }); // base 0.5 * rise opacity
 
   return (
     <Pressable style={styles.screenWrap} onPress={handlePress}>
@@ -170,13 +171,13 @@ export default function SplashScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Top bar */}
+      {/* top bar */}
       <View style={styles.top}>
-        <Text style={styles.topLabel}>SEALINE</Text>
-        <Text style={[styles.topLabel, { color: COLORS.inkDim }]}>v1.0</Text>
+        <Text style={styles.topLabel}>ONB</Text>
+        <Text style={[styles.topLabel, { color: COLORS.inkDim }]}>Version 1.0</Text>
       </View>
 
-      {/* Center content */}
+      {/* center wordmark */}
       <View style={styles.center} pointerEvents="none">
         <Animated.View
           style={[
@@ -191,12 +192,12 @@ export default function SplashScreen() {
           ]}
         />
         <View style={styles.wordmarkWrap}>
-          <Text style={styles.wordmark}>SEALINE</Text>
+          <Text style={styles.wordmark}>ONB</Text>
           <Text style={styles.tagline}>Begin quietly</Text>
         </View>
       </View>
 
-      {/* Bottom CTA */}
+      {/* bottom CTA */}
       <View style={styles.bottom} pointerEvents="none">
         <View style={styles.chevrons}>
           <Chevron
@@ -216,7 +217,7 @@ export default function SplashScreen() {
         <View style={styles.ctaLine} />
       </View>
 
-      {/* Ripple effects */}
+      {/* ripples */}
       {ripples.map((r) => {
         const scale = r.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
         const opacity = r.progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
@@ -240,15 +241,6 @@ export default function SplashScreen() {
         );
       })}
 
-      {/* "You're in" overlay */}
-      {showNext && (
-        <Animated.View
-          pointerEvents={showNext ? 'auto' : 'none'}
-          style={[styles.next, { opacity: nextOpacity }]}
-        >
-          <Text style={styles.nextText}>You&apos;re in.</Text>
-        </Animated.View>
-      )}
     </Pressable>
   );
 }
@@ -272,7 +264,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     textTransform: 'uppercase',
     color: COLORS.inkFaint,
-    fontWeight: '500',
+    fontFamily: 'SpaceGrotesk-Regular',
   },
   center: {
     flex: 1,
@@ -298,13 +290,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   wordmark: {
+    fontFamily: 'Fraunces-Black',
     fontWeight: '800',
-    fontSize: 44,
-    letterSpacing: 9,
+    fontSize: 64,
+    letterSpacing: 9, // approximates 0.14em at 64px
     color: COLORS.ink,
   },
   tagline: {
     marginTop: 6,
+    fontFamily: 'Fraunces-Italic',
     fontStyle: 'italic',
     opacity: 0.6,
     fontSize: 9,
@@ -327,6 +321,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: COLORS.inkDim,
     fontWeight: '500',
+    fontFamily: 'SpaceGrotesk-Medium',
   },
   ctaLine: {
     width: 34,
@@ -339,18 +334,5 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.ringSoft,
     borderWidth: 1,
     borderColor: COLORS.ring,
-  },
-  next: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.bg,
-  },
-  nextText: {
-    fontStyle: 'italic',
-    fontWeight: '400',
-    fontSize: 22,
-    color: COLORS.inkDim,
-    letterSpacing: 0.4,
   },
 });
